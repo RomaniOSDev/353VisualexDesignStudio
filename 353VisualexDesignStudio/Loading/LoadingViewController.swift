@@ -339,7 +339,7 @@ final class LoadingViewController: UIViewController {
         }
 
         removeConversionObserver()
-        transitionToContentView()
+        transitionToConfigDebug()
     }
 
     private func waitForConversionDataThenRequestConfig() {
@@ -375,7 +375,7 @@ final class LoadingViewController: UIViewController {
         if ConfigManager.shared.isSavedURLValid, let url = ConfigManager.shared.savedURL {
             transitionToWebView(url: url)
         } else {
-            transitionToContentView()
+            transitionToConfigDebug()
         }
     }
 
@@ -395,14 +395,15 @@ final class LoadingViewController: UIViewController {
         }
     }
 
-    private func transitionToContentView() {
+    private func transitionToConfigDebug() {
         guard !didFinishTransition else { return }
         didFinishTransition = true
         cancelScheduledWork()
         stopOfflineNetworkMonitoring()
         removeConversionObserver()
-        let content = UIHostingController(rootView: ContentView())
-        replaceRoot(with: content)
+        let debug = UIHostingController(rootView: ConfigDebugView())
+        debug.view.backgroundColor = UIColor(named: "AppBackground") ?? .black
+        replaceRoot(with: debug)
     }
 
     private func replaceRoot(with vc: UIViewController) {

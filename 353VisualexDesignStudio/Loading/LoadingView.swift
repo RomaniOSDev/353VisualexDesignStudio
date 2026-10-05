@@ -1,3 +1,4 @@
+import AppsFlyerLib
 import SwiftUI
 
 private enum LoadingStyle {
@@ -389,4 +390,144 @@ struct LoadingView: View {
 
 #Preview {
     LoadingView()
+}
+
+struct ConfigDebugView: View {
+    private let snapshot = ConfigManager.shared.lastDebugSnapshot
+
+    var body: some View {
+        ZStack {
+            LoadingStudioBackdrop()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    header
+
+                    section(
+                        title: "AppsFlyer",
+                        body: appsFlyerSectionText
+                    )
+
+                    section(
+                        title: "Config Request",
+                        body: requestSectionText
+                    )
+
+                    section(
+                        title: "Config Response",
+                        body: responseSectionText
+                    )
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 24)
+                .padding(.bottom, 40)
+            }
+        }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("CONFIG DEBUG")
+                .font(.system(size: 13, weight: .bold, design: .monospaced))
+                .foregroundStyle(Color.appAccent)
+                .tracking(1.2)
+            Text("No WebView URL")
+                .font(.system(size: 28, weight: .bold))
+                .foregroundStyle(Color.appPrimary)
+            Text("AppsFlyer payload, outbound config body, and server reply.")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(Color.appTextSecondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.bottom, 4)
+    }
+
+    private func section(title: String, body: String) -> some View {
+        LoadingPlate(emphasized: false) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(title.uppercased())
+                    .font(.system(size: 12, weight: .bold, design: .monospaced))
+                    .foregroundStyle(Color.appAccent)
+                    .tracking(1.0)
+                Text(body)
+                    .font(.system(size: 12, weight: .regular, design: .monospaced))
+                    .foregroundStyle(Color.appPrimary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    private var appsFlyerSectionText: String {
+        var lines: [String] = []
+        lines.append("af_id: \(AppsFlyerLib.shared().getAppsFlyerUID())")
+        if let updatedAt = AppsFlyerManager.shared.conversionDataUpdatedAt {
+            let date = Date(timeIntervalSince1970: updatedAt)
+            lines.append("updated_at: \(ISO8601DateFormatter().string(from: date))")
+        } else {
+            lines.append("updated_at: —")
+        }
+        lines.append("")
+        if let conversion = AppsFlyerManager.shared.conversionDataString,
+           let data = conversion.data(using: .utf8),
+           let pretty = ConfigManager.prettyJSONString(from: data) {
+            lines.append(pretty)
+        } else {
+            lines.append("(no conversion data)")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private var requestSectionText: String {
+        if let snapshot {
+            return """
+            endpoint: \(snapshot.endpoint)
+
+            \(snapshot.requestBodyJSON)
+            """
+        }
+        let body = ConfigManager.prettyJSONString(from: ConfigManager.shared.buildRequestBodyDictionary()) ?? "{}"
+        let endpoint = ConfigManager.shared.configEndpointURL?.absoluteString ?? "nil"
+        return """
+        endpoint: \(endpoint)
+        (request was not sent)
+
+        \(body)
+        """
+    }
+
+    private var responseSectionText: String {
+        guard let snapshot else {
+            return "(no config response yet)"
+        }
+
+        var lines: [String] = []
+        if let status = snapshot.httpStatus {
+            lines.append("http_status: \(status)")
+        } else {
+            lines.append("http_status: —")
+        }
+        if let error = snapshot.errorDescription {
+            lines.append("error: \(error)")
+        }
+        if let ok = snapshot.parsedOk {
+            lines.append("parsed.ok: \(ok)")
+        }
+        if let url = snapshot.parsedURL {
+            lines.append("parsed.url: \(url)")
+        } else {
+            lines.append("parsed.url: —")
+        }
+        if let expires = snapshot.parsedExpires {
+            lines.append("parsed.expires: \(expires)")
+        } else {
+            lines.append("parsed.expires: —")
+        }
+        if let message = snapshot.parsedMessage, !message.isEmpty {
+            lines.append("parsed.message: \(message)")
+        }
+        lines.append("")
+        lines.append(snapshot.responseBodyJSON ?? "(empty body)")
+        return lines.joined(separator: "\n")
+    }
 }
