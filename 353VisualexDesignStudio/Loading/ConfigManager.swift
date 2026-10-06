@@ -19,18 +19,6 @@ enum ConfigManagerOptionalData {
     static var firebaseProjectId: String?
 }
 
-struct ConfigDebugSnapshot {
-    let endpoint: String
-    let requestBodyJSON: String
-    let httpStatus: Int?
-    let responseBodyJSON: String?
-    let parsedOk: Bool?
-    let parsedURL: String?
-    let parsedExpires: Int64?
-    let parsedMessage: String?
-    let errorDescription: String?
-}
-
 final class ConfigManager {
 
     static let shared = ConfigManager()
@@ -38,8 +26,6 @@ final class ConfigManager {
     var configEndpointURL: URL? = URL(string: "https://visualexdesignstudio.com/config.php")
 
     var storeId: String = "id6809893592"
-
-    private(set) var lastDebugSnapshot: ConfigDebugSnapshot?
 
     private init() {
         migrateLegacyKeysIfNeeded()
@@ -74,114 +60,6 @@ final class ConfigManager {
     }
 
     func buildRequestBody() -> Data? {
-        let body = buildRequestBodyDictionary()
-        return try? JSONSerialization.data(withJSONObject: body)
-    }
-
-    func requestConfig(completion: @escaping (Result<ConfigResponse, Error>) -> Void) {
-        guard let endpoint = configEndpointURL else {
-            lastDebugSnapshot = ConfigDebugSnapshot(
-                endpoint: "nil",
-                requestBodyJSON: prettyJSONString(from: buildRequestBodyDictionary()) ?? "{}",
-                httpStatus: nil,
-                responseBodyJSON: nil,
-                parsedOk: nil,
-                parsedURL: nil,
-                parsedExpires: nil,
-                parsedMessage: nil,
-                errorDescription: ConfigError.missingEndpoint.localizedDescription
-            )
-            completion(.failure(ConfigError.missingEndpoint))
-            return
-        }
-        guard let body = buildRequestBody() else {
-            lastDebugSnapshot = ConfigDebugSnapshot(
-                endpoint: endpoint.absoluteString,
-                requestBodyJSON: "{}",
-                httpStatus: nil,
-                responseBodyJSON: nil,
-                parsedOk: nil,
-                parsedURL: nil,
-                parsedExpires: nil,
-                parsedMessage: nil,
-                errorDescription: ConfigError.failedToBuildBody.localizedDescription
-            )
-            completion(.failure(ConfigError.failedToBuildBody))
-            return
-        }
-
-        let requestBodyJSON = prettyJSONString(from: body) ?? String(data: body, encoding: .utf8) ?? "{}"
-
-        var request = URLRequest(url: endpoint)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = body
-        request.timeoutInterval = 10
-
-        let task = URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
-            guard let self else { return }
-            let http = response as? HTTPURLResponse
-            let statusCode = http?.statusCode
-            let rawResponse = Self.prettyJSONString(from: data)
-                ?? data.flatMap { String(data: $0, encoding: .utf8) }
-
-            if let error = error {
-                self.lastDebugSnapshot = ConfigDebugSnapshot(
-                    endpoint: endpoint.absoluteString,
-                    requestBodyJSON: requestBodyJSON,
-                    httpStatus: statusCode,
-                    responseBodyJSON: rawResponse,
-                    parsedOk: nil,
-                    parsedURL: nil,
-                    parsedExpires: nil,
-                    parsedMessage: nil,
-                    errorDescription: error.localizedDescription
-                )
-                DispatchQueue.main.async { completion(.failure(error)) }
-                return
-            }
-
-            let code = statusCode ?? 0
-            let parsed = self.parseConfigResponse(data: data, statusCode: code)
-            switch parsed {
-            case .success(let config):
-                self.lastDebugSnapshot = ConfigDebugSnapshot(
-                    endpoint: endpoint.absoluteString,
-                    requestBodyJSON: requestBodyJSON,
-                    httpStatus: code,
-                    responseBodyJSON: rawResponse,
-                    parsedOk: config.ok,
-                    parsedURL: config.url,
-                    parsedExpires: config.expires,
-                    parsedMessage: config.message,
-                    errorDescription: nil
-                )
-                if config.ok,
-                   let url = config.url,
-                   let expires = config.expires,
-                   URL(string: url) != nil {
-                    self.saveStoredConfig(urlString: url, expires: expires)
-                }
-                DispatchQueue.main.async { completion(.success(config)) }
-            case .failure(let parseError):
-                self.lastDebugSnapshot = ConfigDebugSnapshot(
-                    endpoint: endpoint.absoluteString,
-                    requestBodyJSON: requestBodyJSON,
-                    httpStatus: code,
-                    responseBodyJSON: rawResponse,
-                    parsedOk: nil,
-                    parsedURL: nil,
-                    parsedExpires: nil,
-                    parsedMessage: nil,
-                    errorDescription: parseError.localizedDescription
-                )
-                DispatchQueue.main.async { completion(.failure(parseError)) }
-            }
-        }
-        task.resume()
-    }
-
-    func buildRequestBodyDictionary() -> [String: Any] {
         var body: [String: Any] = [:]
 
         if let conversionString = AppsFlyerManager.shared.conversionDataString,
@@ -214,34 +92,50 @@ final class ConfigManager {
             body["firebase_project_id"] = projectId
         }
 
-        return body
+        return try? JSONSerialization.data(withJSONObject: body)
     }
 
-    static func prettyJSONString(from data: Data?) -> String? {
-        guard let data, !data.isEmpty else { return nil }
-        guard let object = try? JSONSerialization.jsonObject(with: data),
-              let pretty = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys]),
-              let string = String(data: pretty, encoding: .utf8) else {
-            return String(data: data, encoding: .utf8)
+    func requestConfig(completion: @escaping (Result<ConfigResponse, Error>) -> Void) {
+        guard let endpoint = configEndpointURL else {
+            completion(.failure(ConfigError.missingEndpoint))
+            return
         }
-        return string
-    }
-
-    static func prettyJSONString(from dictionary: [String: Any]) -> String? {
-        guard JSONSerialization.isValidJSONObject(dictionary),
-              let data = try? JSONSerialization.data(withJSONObject: dictionary, options: [.prettyPrinted, .sortedKeys]),
-              let string = String(data: data, encoding: .utf8) else {
-            return nil
+        guard let body = buildRequestBody() else {
+            completion(.failure(ConfigError.failedToBuildBody))
+            return
         }
-        return string
-    }
 
-    private func prettyJSONString(from data: Data) -> String? {
-        Self.prettyJSONString(from: data)
-    }
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = body
+        request.timeoutInterval = 10
 
-    private func prettyJSONString(from dictionary: [String: Any]) -> String? {
-        Self.prettyJSONString(from: dictionary)
+        let task = URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            if let error = error {
+                DispatchQueue.main.async { completion(.failure(error)) }
+                return
+            }
+            let http = response as? HTTPURLResponse
+            let statusCode = http?.statusCode ?? 0
+            let parsed = self?.parseConfigResponse(data: data, statusCode: statusCode) ?? .failure(ConfigError.invalidResponse)
+            if case .success(let config) = parsed,
+               config.ok,
+               let url = config.url,
+               let expires = config.expires,
+               URL(string: url) != nil {
+                self?.saveStoredConfig(urlString: url, expires: expires)
+            }
+            DispatchQueue.main.async {
+                switch parsed {
+                case .success(let c):
+                    completion(.success(c))
+                case .failure(let e):
+                    completion(.failure(e))
+                }
+            }
+        }
+        task.resume()
     }
 
     private func parseConfigResponse(data: Data?, statusCode: Int) -> Result<ConfigResponse, Error> {
@@ -258,8 +152,7 @@ final class ConfigManager {
         let expires = payload.expires?.int64Value
         let url = payload.url?.trimmingCharacters(in: .whitespacesAndNewlines)
         let hasValidURL = url.flatMap { URL(string: $0) } != nil
-        let isFresh = expires.map { $0 > Int64(Date().timeIntervalSince1970) } ?? false
-        let ok = payload.ok && hasValidURL && isFresh
+        let ok = payload.ok && hasValidURL
         return .success(
             ConfigResponse(
                 ok: ok,
